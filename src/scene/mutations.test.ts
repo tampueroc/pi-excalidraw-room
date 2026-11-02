@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildElements, type BuiltElement, type ElementSpec } from "./elements.ts";
-import { applyPatch, markDeleted, MutationError, rebindArrow, translate } from "./mutations.ts";
+import { applyPatch, markDeleted, MutationError, rebindArrow, translate, versionConflict } from "./mutations.ts";
 
 function sceneOf(...specs: ElementSpec[]): Map<string, BuiltElement> {
   const { elements } = buildElements(specs, { lastIndex: null, now: 1 });
@@ -157,4 +157,11 @@ test("an unknown id or a no-op delta is refused", () => {
   const id = [...scene.keys()][0]!;
   assert.throws(() => translate(scene, ["nope"], 10, 0), MutationError);
   assert.throws(() => translate(scene, [id], 0, 0), MutationError);
+});
+
+test("a stale expected version is a conflict, not an overwrite", () => {
+  assert.equal(versionConflict({ version: 4 }, 4), null);
+  assert.equal(versionConflict({ version: 4 }, undefined), null);
+  assert.equal(versionConflict(undefined, 4), null);
+  assert.match(versionConflict({ version: 7 }, 4) ?? "", /now v7, not v4/);
 });

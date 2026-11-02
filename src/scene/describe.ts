@@ -32,7 +32,7 @@ export function labelOf(element: SceneElement, byId: Map<string, SceneElement>):
 
 function describeElement(element: SceneElement, byId: Map<string, SceneElement>): string {
   const label = labelOf(element, byId);
-  const head = `${element.type} ${element.id}`;
+  const head = `${element.type} ${element.id} v${element.version}`;
   const geometry = `${Math.round(element.x)},${Math.round(element.y)} ${Math.round(element.width)}×${Math.round(element.height)}`;
   const labelPart = label ? ` ${JSON.stringify(label)}` : "";
   return `- ${head}${labelPart} @ ${geometry}`;

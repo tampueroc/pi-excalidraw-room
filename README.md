@@ -61,13 +61,26 @@ commit it or paste it into a log.
 | `excalidraw_status` | Connection, peers, scene source and version |
 | `excalidraw_read` | Elements with labels, positions, size and scene bounds |
 | `excalidraw_add` | Create rectangles, ellipses, diamonds and text, optionally labelled |
-| `excalidraw_update` | Move, resize, recolour or relabel an element |
+| `excalidraw_update` | Move, resize, recolour or relabel an element; `ifVersion` refuses a stale write |
 | `excalidraw_delete` | Delete elements (bound text goes with them) |
 | `excalidraw_connect` | Bound arrow between two elements |
 | `excalidraw_move` | Move elements by a delta; labels and bound arrows follow |
 | `excalidraw_snapshot` | Render the scene to a PNG the agent can look at |
 | `excalidraw_export` | Write the scene to a `.excalidraw` file |
 | `excalidraw_import` | Load a `.excalidraw` file, remapping ids into the room |
+
+## Concurrency
+
+Two writers share a room, so both directions are guarded:
+
+- `excalidraw_read` reports each element as `type id v<version>`. Passing that number back
+  as `excalidraw_update(ifVersion: …)` makes the write fail with `conflict: true` if a person
+  edited the element meanwhile, instead of resurrecting the stale copy.
+- Before saving, the client reads the stored scene. If the backend holds a newer version —
+  the browser saved after our debounce fired — it adopts that copy instead of overwriting it.
+
+A dropped connection is recovered, not just logged: the client rejoins, resumes presence so
+it does not become an anonymous socket, and re-syncs the scene it missed.
 
 ## Development
 

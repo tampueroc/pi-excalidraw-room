@@ -3,7 +3,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { RoomClient } from "../client/room-client.ts";
 import { summarizeScene } from "../scene/describe.ts";
 import { buildElements, type BuiltElement, type ElementSpec } from "../scene/elements.ts";
-import { applyPatch, markDeleted, MutationError, translate } from "../scene/mutations.ts";
+import { applyPatch, markDeleted, MutationError, translate, versionConflict } from "../scene/mutations.ts";
 
 const NOT_IN_ROOM = "Not in a room. Call excalidraw_join with the collaboration link first.";
 
@@ -165,13 +165,35 @@ export function registerSceneTools(pi: ExtensionAPI, client: RoomClient): void {
       text: Type.Optional(Type.String({ description: "New label or text content" })),
       backgroundColor: Type.Optional(Type.String()),
       strokeColor: Type.Optional(Type.String()),
+      ifVersion: Type.Optional(
+        Type.Number({
+          description:
+            "The element's version as excalidraw_read reported it. The update is refused if someone changed it since.",
+        }),
+      ),
     }),
     async execute(_toolCallId, params) {
       const blocked = requireRoom(client);
       if (blocked) {
         return { content: [{ type: "text", text: blocked }], details: { ok: false } as Record<string, unknown> };
       }
-      const { id, ...patch } = params;
+      const { id, ifVersion, ...patch } = params;
+
+      // A person may have edited the element since the agent last read it.
+      // Writing anyway would resurrect a stale copy with a higher version.
+      const conflict = versionConflict(client.element(id), ifVersion);
+      if (conflict) {
+        return {
+          content: [
+            { type: "text", text: `refused: ${id} ${conflict}. Re-read it and reapply the change.` },
+          ],
+          details: {
+            ok: false,
+            conflict: true,
+            version: client.element(id)?.version,
+          } as Record<string, unknown>,
+        };
+      }
       try {
         const changed = applyPatch(asSceneMap(client), id, patch);
         await client.apply(changed);

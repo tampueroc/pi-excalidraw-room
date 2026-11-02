@@ -16,6 +16,19 @@ export interface ElementPatch {
 
 export class MutationError extends Error {}
 
+/**
+ * A person may have edited an element since the agent read it. Writing anyway
+ * would resurrect the stale copy with a higher version, which peers would then
+ * accept — so the edit is refused and the agent has to look again.
+ */
+export function versionConflict(
+  current: { version: number } | undefined,
+  expected: number | undefined,
+): string | null {
+  if (expected === undefined || !current || current.version === expected) return null;
+  return `element is now v${current.version}, not v${expected}`;
+}
+
 function labelOf(element: BuiltElement, scene: Map<string, BuiltElement>): BuiltElement | undefined {
   for (const bound of (element.boundElements as { id: string; type: string }[] | null) ?? []) {
     if (bound.type !== "text") continue;
