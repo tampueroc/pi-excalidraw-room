@@ -38,6 +38,40 @@ function describeElement(element: SceneElement, byId: Map<string, SceneElement>)
   return `- ${head}${labelPart} @ ${geometry}`;
 }
 
+export interface SceneEdge {
+  id: string;
+  from: string;
+  to: string;
+  fromLabel: string;
+  toLabel: string;
+}
+
+/**
+ * Arrows as edges: who connects to whom, by label rather than by geometry.
+ *
+ * An arrow only counts when both ends are bound to a live element; a floating
+ * arrow is line art, and saying so is more useful than inventing endpoints.
+ */
+export function sceneEdges(all: readonly SceneElement[]): SceneEdge[] {
+  const byId = new Map(all.map((el) => [el.id, el]));
+  const name = (id: string): string => {
+    const element = byId.get(id);
+    if (!element) return id;
+    return labelOf(element, byId) || `${element.type} ${id}`;
+  };
+
+  const edges: SceneEdge[] = [];
+  for (const element of all) {
+    if (element.type !== "arrow" || element.isDeleted) continue;
+    const start = (element.startBinding as { elementId?: unknown } | null | undefined)?.elementId;
+    const end = (element.endBinding as { elementId?: unknown } | null | undefined)?.elementId;
+    if (typeof start !== "string" || typeof end !== "string") continue;
+    if (!byId.has(start) || !byId.has(end)) continue;
+    edges.push({ id: element.id, from: start, to: end, fromLabel: name(start), toLabel: name(end) });
+  }
+  return edges;
+}
+
 export function summarizeScene(all: readonly SceneElement[], limit = 200): SceneSummary {
   const visible = all.filter((el) => !el.isDeleted);
   const deletedCount = all.length - visible.length;
@@ -62,6 +96,8 @@ export function summarizeScene(all: readonly SceneElement[], limit = 200): Scene
 
   const shown = ordered.slice(0, limit).map((el) => describeElement(el, byId));
   const hidden = ordered.length - shown.length;
+  const edges = sceneEdges(all);
+  const arrows = ordered.filter((el) => el.type === "arrow").length;
   const lines = [`${visible.length} visible element(s)`];
   if (deletedCount > 0) lines.push(`${deletedCount} deleted`);
   if (bounds) {
@@ -71,6 +107,12 @@ export function summarizeScene(all: readonly SceneElement[], limit = 200): Scene
   }
   if (shown.length) lines.push(...shown);
   if (hidden > 0) lines.push(`... ${hidden} more element(s), raise ` + "`limit` or filter by `ids`");
+  if (edges.length) {
+    lines.push("connections:");
+    for (const edge of edges) lines.push(`- ${edge.fromLabel} → ${edge.toLabel} (arrow ${edge.id})`);
+  }
+  const unbound = arrows - edges.length;
+  if (unbound > 0) lines.push(`${unbound} arrow(s) have a free end and connect nothing`);
 
   return {
     text: lines.join("\n"),
