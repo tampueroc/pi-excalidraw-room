@@ -17,7 +17,7 @@
   "scripts": {
     "check": "tsc --noEmit",
     "test": "node --test src/*.test.ts src/**/*.test.ts tests/interop.test.ts",
-    "test:e2e": "EXCALIDRAW_E2E=1 node --test --test-concurrency=1 tests/e2e-local.test.ts tests/e2e-write.test.ts tests/e2e-persist.test.ts",
+    "test:e2e": "EXCALIDRAW_E2E=1 node --test --test-concurrency=1 tests/e2e-local.test.ts tests/e2e-write.test.ts tests/e2e-persist.test.ts tests/e2e-reconnect.test.ts",
     "load": "node scripts/check-load.cjs"
   },
   "dependencies": {
@@ -34,5 +34,21 @@
     "@types/node": "^22.15.3",
     "typebox": "^1.3.27",
     "typescript": "^5.9.3"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "src",
+    "docs",
+    "examples",
+    "scripts",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tampueroc/pi-excalidraw-room.git"
   }
 }
