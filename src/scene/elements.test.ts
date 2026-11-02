@@ -117,3 +117,46 @@ test("text metrics grow with line count and length", () => {
   assert.ok(long.width > short.width);
   assert.ok(multiline.height > short.height);
 });
+
+test("an arrow label is a text element bound inside the arrow", () => {
+  const shapes = buildElements([{ type: "rectangle", x: 0, y: 0 }, { type: "rectangle", x: 400, y: 0 }], {
+    lastIndex: null,
+  });
+  const scene = new Map(shapes.elements.map((el) => [el.id, el]));
+  const { elements } = buildElements(
+    [{ type: "arrow", from: shapes.elements[0]!.id, to: shapes.elements[1]!.id, text: "requests" }],
+    { lastIndex: "a9", existing: scene },
+  );
+
+  const [arrow, label] = elements as [BuiltElement, BuiltElement];
+  assert.equal(arrow.type, "arrow");
+  assert.equal(label.type, "text");
+  assert.equal(label.text, "requests");
+  assert.equal(label.containerId, arrow.id);
+  assert.equal(arrow.boundElements?.[0]?.id, label.id);
+  // The label sits on the arrow's midpoint.
+  assert.ok(Math.abs(label.x - (arrow.x + arrow.width / 2)) < 120);
+});
+
+test("a frame goes under its children and stamps their frameId", () => {
+  const built = buildElements([{ type: "rectangle", x: 40, y: 40 }, { type: "rectangle", x: 300, y: 40 }], {
+    lastIndex: null,
+  });
+  const scene = new Map(built.elements.map((el) => [el.id, el]));
+  const childIds = built.elements.map((el) => el.id);
+
+  const { elements, touched } = buildElements(
+    [{ type: "frame", name: "Services", x: 0, y: 0, width: 520, height: 200, children: childIds }],
+    { lastIndex: "a9", existing: scene },
+  );
+
+  const frame = elements[0] as BuiltElement;
+  assert.equal(frame.type, "frame");
+  assert.equal(frame.name, "Services");
+  assert.ok(frame.index < childIds.map((id) => scene.get(id)!.index).sort()[0]!, "the frame is not beneath");
+  assert.equal(touched.length, 2);
+  for (const child of touched) {
+    assert.equal(child.frameId, frame.id);
+    assert.equal(child.version, 2);
+  }
+});

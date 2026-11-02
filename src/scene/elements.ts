@@ -15,7 +15,7 @@ const LINE_HEIGHT = 1.25;
 export const BINDING_GAP = 4;
 
 export type ShapeType = "rectangle" | "ellipse" | "diamond";
-export type ElementType = ShapeType | "text" | "arrow";
+export type ElementType = ShapeType | "text" | "arrow" | "frame";
 
 export interface Binding {
   elementId: string;
@@ -68,6 +68,8 @@ export interface TextSpec {
 
 export interface ArrowSpec {
   type: "arrow";
+  /** Label drawn at the middle of the arrow. */
+  text?: string;
   /** Element to start at; when omitted the arrow starts at x,y. */
   from?: string;
   /** Element to end at; when omitted it ends at the arrow's own tip. */
@@ -76,12 +78,22 @@ export interface ArrowSpec {
   y?: number;
   width?: number;
   height?: number;
-  text?: string;
   strokeColor?: string;
   id?: string;
 }
 
-export type ElementSpec = ShapeSpec | TextSpec | ArrowSpec;
+export interface FrameSpec {
+  type: "frame";
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Elements that belong to the frame (they get its frameId). */
+  children?: string[];
+}
+
+export type ElementSpec = ShapeSpec | TextSpec | ArrowSpec | FrameSpec;
 
 export interface BuildContext {
   /** Fractional index of the last element in the scene, or null when empty. */
@@ -115,7 +127,15 @@ export function measureText(text: string, fontSize = FONT_SIZE): { width: number
 }
 
 function textElement(
-  spec: { text: string; x: number; y: number; fontSize?: number; strokeColor?: string; id?: string },
+  spec: {
+    text: string;
+    x: number;
+    y: number;
+    fontSize?: number;
+    strokeColor?: string;
+    backgroundColor?: string;
+    id?: string;
+  },
   containerId: string | null,
   index: string,
   now: number,
@@ -131,7 +151,7 @@ function textElement(
     height: size.height,
     angle: 0,
     strokeColor: spec.strokeColor ?? "#1e1e1e",
-    backgroundColor: "transparent",
+    backgroundColor: spec.backgroundColor ?? "transparent",
     fillStyle: "solid",
     strokeWidth: 2,
     strokeStyle: "solid",
@@ -240,14 +260,60 @@ export function buildElements(specs: ElementSpec[], ctx: BuildContext): BuildRes
       continue;
     }
 
+    if (spec.type === "frame") {
+      // A frame belongs under its children, so it takes the slot before the
+      // first of them instead of the end of the scene.
+      const childIndexes = (spec.children ?? [])
+        .map((id) => byId.get(id)?.index)
+        .filter((index): index is string => typeof index === "string")
+        .sort();
+      const frameIndex = childIndexes.length
+        ? generateKeyBetween(null, childIndexes[0]!)
+        : generateKeyBetween(lastIndex, null);
+      const frame = frameElement(spec, frameIndex, now);
+      elements.push(frame);
+      byId.set(frame.id, frame);
+      for (const id of spec.children ?? []) {
+        const child = byId.get(id);
+        if (child) touched.push(bump({ ...child, frameId: frame.id }));
+      }
+      if (!childIndexes.length) lastIndex = frameIndex;
+      continue;
+    }
+
     if (spec.type === "arrow") {
-      const arrow = buildArrow(spec, lastIndex, now, byId);
+      const label = spec.text?.trim() ? spec.text.trim() : null;
+      const labelId = label ? randomId() : null;
+      const arrow = buildArrow(spec, lastIndex, now, byId, labelId);
       elements.push(arrow);
       for (const binding of [arrow.startBinding, arrow.endBinding]) {
         const bound = binding ? byId.get((binding as Binding).elementId) : undefined;
         if (bound) touched.push(attachBinding(bound, arrow.id, "arrow"));
       }
       byId.set(arrow.id, arrow);
+
+      // An arrow's label is a text element bound inside the arrow, the same way
+      // a shape's label is bound inside the shape.
+      if (label && labelId) {
+        const measured = measureText(label);
+        const text = textElement(
+          {
+            text: label,
+            x: Math.round(arrow.x + arrow.width / 2 - measured.width / 2),
+            y: Math.round(arrow.y + arrow.height / 2 - measured.height / 2),
+            // An arrow label sits on the line itself, so it needs the canvas
+            // colour behind it or the stroke runs through the text.
+            backgroundColor: "#ffffff",
+            id: labelId,
+          },
+          arrow.id,
+          generateKeyBetween(lastIndex, null),
+          now,
+        );
+        lastIndex = text.index;
+        elements.push(text);
+        byId.set(text.id, text);
+      }
       continue;
     }
 
@@ -283,6 +349,38 @@ export function buildElements(specs: ElementSpec[], ctx: BuildContext): BuildRes
   return { elements, touched };
 }
 
+function frameElement(spec: FrameSpec, index: string, now: number): BuiltElement {
+  return {
+    id: randomId(),
+    type: "frame",
+    name: spec.name,
+    x: spec.x,
+    y: spec.y,
+    width: spec.width,
+    height: spec.height,
+    angle: 0,
+    strokeColor: "#1e1e1e",
+    backgroundColor: "transparent",
+    fillStyle: "solid",
+    strokeWidth: 2,
+    strokeStyle: "solid",
+    roughness: 1,
+    opacity: 100,
+    groupIds: [],
+    frameId: null,
+    roundness: null,
+    seed: randomInt(),
+    version: 1,
+    versionNonce: randomInt(),
+    isDeleted: false,
+    boundElements: null,
+    updated: now,
+    link: null,
+    locked: false,
+    index,
+  };
+}
+
 type LinearElement = BuiltElement & {
   points: [number, number][];
   startBinding: Binding | null;
@@ -295,7 +393,8 @@ function buildArrow(
   index: string,
   now: number,
   byId: Map<string, BuiltElement>,
-  ): LinearElement {
+  labelId: string | null = null,
+): LinearElement {
   const from = spec.from ? byId.get(spec.from) : undefined;
   const to = spec.to ? byId.get(spec.to) : undefined;
 
@@ -330,7 +429,7 @@ function buildArrow(
     version: 1,
     versionNonce: randomInt(),
     isDeleted: false,
-    boundElements: null,
+    boundElements: labelId ? [{ type: "text", id: labelId }] : null,
     updated: now,
     link: null,
     locked: false,
