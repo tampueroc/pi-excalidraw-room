@@ -79,6 +79,17 @@ async function loadResvg(): Promise<typeof import("@resvg/resvg-wasm")> {
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
+/**
+ * Excalidraw cuts an arrow's line out from under its label with an SVG mask
+ * whose content is in user space, relying on the spec default. Browsers agree;
+ * resvg resolves the mask region in objectBoundingBox units and drops the whole
+ * masked group, which erases the arrow (and sometimes the label with it). Naming
+ * the units explicitly is the same drawing, understood by both.
+ */
+export function forRasterizer(svg: string): string {
+  return svg.replace(/<mask(?![^>]*maskUnits=)/g, '<mask maskUnits="userSpaceOnUse"');
+}
+
 /** Everything that is not an element property Excalidraw would choke on. */
 function toExportElement(element: SceneElement): Record<string, unknown> {
   const { customData, ...rest } = element as Record<string, unknown>;
@@ -107,7 +118,7 @@ export async function renderScene(
   const serializer = new (globalThis as unknown as {
     XMLSerializer: new () => { serializeToString(node: unknown): string };
   }).XMLSerializer();
-  const svg = serializer.serializeToString(svgElement);
+  const svg = forRasterizer(serializer.serializeToString(svgElement));
 
   const font = findFont(options.fontPath);
   const resvg = await loadResvg();

@@ -59,11 +59,13 @@ commit it or paste it into a log.
 | `excalidraw_join` | Join a room (explicit link or `EXCALIDRAW_ROOM_LINK`) |
 | `excalidraw_leave` | Disconnect |
 | `excalidraw_status` | Connection, peers, scene source and version |
-| `excalidraw_read` | Elements with labels, positions, size and scene bounds |
+| `excalidraw_read` | Elements with labels, positions, versions, scene bounds, and arrows as `A → B` edges |
 | `excalidraw_add` | Create rectangles, ellipses, diamonds and text, optionally labelled |
+| `excalidraw_draw_graph` | Draw a diagram from nodes + edges with computed layered layout |
+| `excalidraw_frame` | Put a named frame around elements to show a layer or boundary |
 | `excalidraw_update` | Move, resize, recolour or relabel an element; `ifVersion` refuses a stale write |
 | `excalidraw_delete` | Delete elements (bound text goes with them) |
-| `excalidraw_connect` | Bound arrow between two elements |
+| `excalidraw_connect` | Bound arrow between two elements, optionally labelled |
 | `excalidraw_move` | Move elements by a delta; labels and bound arrows follow |
 | `excalidraw_snapshot` | Render the scene to a PNG the agent can look at |
 | `excalidraw_export` | Write the scene to a `.excalidraw` file |
@@ -102,6 +104,11 @@ browser: the scene is handed to Excalidraw's own `exportToSvg` (0.18 accepts a s
 `document`, so it runs in Node), then rasterised with `@resvg/resvg-wasm`. Shapes, arrows
 and roughness are Excalidraw's; glyph advance widths are approximated because there is no
 canvas to measure with, and the font of an exported SVG is replaced by a system font.
+
+Known limitation: Excalidraw cuts an arrow's line out from under its label with an SVG mask
+whose content sits in a coordinate space `@resvg/resvg-wasm` does not resolve the way a browser
+does, so in a snapshot the label can sit on top of its own arrow. The scene itself, and what
+the browser draws, are correct.
 
 Those dependencies are loaded lazily — a session that never asks for a picture pays
 nothing for `jsdom` or `@excalidraw/excalidraw`.
