@@ -99,6 +99,8 @@ export class RoomClient {
   private source: SceneSource = null;
   private lastRemoteUpdate: number | null = null;
   private presenceTimer: NodeJS.Timeout | null = null;
+  /** Set once the socket has connected, so a later connect is a reconnect. */
+  private hasConnected = false;
   /** Version of the scene the storage backend last accepted. */
   private storedVersion: number | null = null;
   private persistTimer: NodeJS.Timeout | null = null;
@@ -166,16 +168,13 @@ export class RoomClient {
 
   /** Read the scene the frontend last saved, if the backend has one. */
   private async loadStored(): Promise<void> {
-    if (!this.config.storageUrl || !this.roomId || !this.roomKey) return;
-    const stored = await loadRoom(this.config.storageUrl, this.roomId, this.roomKey);
+    const storageUrl = this.config.storageUrl;
+    if (!storageUrl || !this.roomId || !this.roomKey) return;
+    const stored = await loadRoom(storageUrl, this.roomId, this.roomKey);
     if (!stored) return;
-    const elements = stored.elements.filter(isSceneElement);
-    const merged = reconcile([...this.scene.values()], elements);
-    this.scene = new Map(merged.map((el) => [el.id, el]));
-    this.storedVersion = stored.version;
+    await this.adoptStored(stored.elements, stored.version);
     if (this.source === null) this.source = "storage";
-    log(this.config, "loaded", elements.length, "element(s) from storage");
-    this.notifyScene();
+    log(this.config, "loaded", stored.elements.length, "element(s) from storage");
   }
 
   /**
@@ -193,27 +192,56 @@ export class RoomClient {
     this.persistTimer.unref();
   }
 
-  /** Write the scene if it is ahead of the stored copy. Serialised per client. */
+  /**
+   * Write the scene, but only if it is ahead of what the backend holds.
+   *
+   * Reading first is what keeps a person's edit: the browser saves on its own
+   * schedule, so by the time our debounce fires the stored copy may be newer
+   * than the one we were about to write. In that case we adopt theirs instead
+   * of overwriting it. Serialised per client, so two writes cannot interleave.
+   */
   private persist(): Promise<void> {
     this.persistChain = this.persistChain.then(async () => {
-      if (!this.config.storageUrl || !this.roomId || !this.roomKey) return;
-      const all = this.elements(true);
-      const version = sceneVersion(all);
-      if (this.storedVersion !== null && version <= this.storedVersion) return;
+      const storageUrl = this.config.storageUrl;
       const roomId = this.roomId;
       const roomKey = this.roomKey;
+      if (!storageUrl || !roomId || !roomKey) return;
+
       try {
-        await saveRoom(this.config.storageUrl, roomId, roomKey, all, version);
+        const stored = await loadRoom(storageUrl, roomId, roomKey);
+        if (stored) this.storedVersion = stored.version;
+
+        const local = this.elements(true);
+        const version = sceneVersion(local);
+        // Nothing drawn and nothing stored: a write would only create an empty
+        // document for a room this agent never touched.
+        if (local.length === 0 && !stored) return;
+        if (this.storedVersion !== null && version <= this.storedVersion) {
+          if (stored && stored.version > version) await this.adoptStored(stored.elements, stored.version);
+          return;
+        }
+
+        await saveRoom(storageUrl, roomId, roomKey, local, version);
         this.storedVersion = version;
         this.lastPersistedAt = Date.now();
         this.persistError = null;
-        log(this.config, "persisted", all.length, "element(s) at version", version);
+        log(this.config, "persisted", local.length, "element(s) at version", version);
       } catch (err) {
         this.persistError = (err as Error).message;
         log(this.config, "persist failed:", this.persistError);
       }
     });
     return this.persistChain;
+  }
+
+  /** Take the stored copy as the truth, because someone else wrote it later. */
+  private async adoptStored(elements: unknown[], version: number): Promise<void> {
+    const parsed = elements.filter(isSceneElement);
+    const merged = reconcile([...this.scene.values()], parsed);
+    this.scene = new Map(merged.map((el) => [el.id, el]));
+    this.storedVersion = version;
+    log(this.config, "adopted the stored scene at version", version);
+    this.notifyScene();
   }
 
   /** Write out anything pending; call before leaving so nothing is lost. */
@@ -335,7 +363,9 @@ export class RoomClient {
         reject(new Error(`relay ${this.config.relayUrl} refused the connection: ${err.message}`));
       });
       socket.on("connect", () => {
-        log(this.config, "connected", socket.id);
+        const reconnected = this.hasConnected;
+        this.hasConnected = true;
+        log(this.config, reconnected ? "reconnected" : "connected", socket.id);
       });
       socket.on("disconnect", (reason: string) => {
         log(this.config, "disconnected:", reason);
@@ -344,6 +374,10 @@ export class RoomClient {
       socket.on("init-room", () => {
         log(this.config, "init-room → join-room", this.roomId);
         socket.emit("join-room", this.roomId);
+        // Rejoining is also what makes the peers answer with their scene, and
+        // presence has to resume after a reconnect: the collaborators list is
+        // built from broadcasts, so a silent agent is an anonymous socket.
+        this.startPresence();
       });
       socket.on("first-in-room", () => {
         log(this.config, "first-in-room: no peers, loading the stored scene");
@@ -477,5 +511,15 @@ export class RoomClient {
     this.peers.clear();
     this.source = null;
     this.storedVersion = null;
+    this.hasConnected = false;
+  }
+
+  /**
+   * Drop the socket so socket.io reconnects, the way a relay restart does.
+   * Used by tests and by `/excalidraw doctor` to prove recovery works.
+   */
+  dropConnection(): void {
+    const engine = (this.socket?.io as { engine?: { close(): void } } | undefined)?.engine;
+    engine?.close();
   }
 }

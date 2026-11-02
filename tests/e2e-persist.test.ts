@@ -78,3 +78,52 @@ test("a change after the first save is written too", { skip: !enabled }, async (
   assert.equal(restored.x, 500);
   assert.equal(restored.y, 500);
 });
+
+test("a newer stored scene is adopted, not overwritten", { skip: !enabled }, async (t) => {
+  const config = loadConfig();
+  assert.ok(config.storageUrl);
+  const roomId = randomRoomId();
+  const link = `${roomId},${KEY}`;
+
+  const client = new RoomClient({ ...config, agentName: "pi-race" });
+  t.after(async () => client.leave());
+  await client.join(link);
+
+  const { elements } = buildElements([{ type: "rectangle", x: 0, y: 0 }], { lastIndex: null });
+  await client.apply(elements);
+  await client.flushPersist();
+  const mine = client.status();
+  assert.equal(mine.persisted, true, `not persisted: ${mine.persistError}`);
+
+  // A person's browser writes a later scene behind our back.
+  const { saveRoom, loadRoom } = await import("../src/storage/http-storage.ts");
+  const browserElement = {
+    id: "browser-only",
+    type: "ellipse",
+    x: 500,
+    y: 0,
+    width: 80,
+    height: 80,
+    version: 9,
+    versionNonce: 5,
+    updated: 2,
+    isDeleted: false,
+    index: "a9",
+  };
+  const theirVersion = 999;
+  await saveRoom(config.storageUrl, roomId, KEY, [browserElement], theirVersion);
+
+  // Our next write must notice the newer copy and adopt it.
+  const { applyPatch } = await import("../src/scene/mutations.ts");
+  const moved = applyPatch(client.sceneMap() as never, elements[0]!.id, { x: 40 });
+  await client.apply(moved);
+  await client.flushPersist();
+
+  assert.ok(
+    client.elements().some((el) => el.id === "browser-only"),
+    "the browser's element was not adopted",
+  );
+  const stored = await loadRoom(config.storageUrl, roomId, KEY);
+  assert.equal(stored?.version, theirVersion, "the stored copy was overwritten");
+  assert.ok((stored?.elements as { id: string }[]).some((el) => el.id === "browser-only"));
+});
