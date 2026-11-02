@@ -15,6 +15,24 @@ function asSceneMap(client: RoomClient): Map<string, BuiltElement> {
   return client.sceneMap() as unknown as Map<string, BuiltElement>;
 }
 
+/**
+ * Refuse a write when the caller's expected versions are stale, listing what
+ * moved on so the agent can re-read instead of overwriting a person's edit.
+ */
+function conflictFor(
+  client: RoomClient,
+  expected: Record<string, number> | undefined,
+): string | null {
+  if (!expected) return null;
+  const problems: string[] = [];
+  for (const [id, version] of Object.entries(expected)) {
+    const conflict = versionConflict(client.element(id), version);
+    if (conflict) problems.push(`${id}: ${conflict}`);
+  }
+  if (problems.length === 0) return null;
+  return `refused, someone changed the scene: ${problems.join("; ")}. Re-read with excalidraw_read and retry.`;
+}
+
 function dedupe(elements: BuiltElement[]): BuiltElement[] {
   const byId = new Map(elements.map((element) => [element.id, element]));
   return [...byId.values()];
@@ -219,11 +237,23 @@ export function registerSceneTools(pi: ExtensionAPI, client: RoomClient): void {
     promptSnippet: "Delete elements from the live Excalidraw room",
     parameters: Type.Object({
       ids: Type.Array(Type.String(), { description: "Element ids to delete" }),
+      ifVersions: Type.Optional(
+        Type.Record(Type.String(), Type.Number(), {
+          description: "Versions as excalidraw_read reported them; the delete is refused if any changed.",
+        }),
+      ),
     }),
     async execute(_toolCallId, params) {
       const blocked = requireRoom(client);
       if (blocked) {
         return { content: [{ type: "text", text: blocked }], details: { ok: false } as Record<string, unknown> };
+      }
+      const conflict = conflictFor(client, params.ifVersions);
+      if (conflict) {
+        return {
+          content: [{ type: "text", text: conflict }],
+          details: { ok: false, conflict: true } as Record<string, unknown>,
+        };
       }
       try {
         const changed = markDeleted(asSceneMap(client), params.ids);
@@ -252,11 +282,24 @@ export function registerSceneTools(pi: ExtensionAPI, client: RoomClient): void {
       ids: Type.Array(Type.String(), { description: "Element ids to move" }),
       dx: Type.Number({ description: "Horizontal delta in canvas units" }),
       dy: Type.Number({ description: "Vertical delta in canvas units" }),
+      ifVersions: Type.Optional(
+        Type.Record(Type.String(), Type.Number(), {
+          description:
+            "Versions as excalidraw_read reported them, e.g. {\"abc123\": 4}. The move is refused if any changed.",
+        }),
+      ),
     }),
     async execute(_toolCallId, params) {
       const blocked = requireRoom(client);
       if (blocked) {
         return { content: [{ type: "text", text: blocked }], details: { ok: false } as Record<string, unknown> };
+      }
+      const conflict = conflictFor(client, params.ifVersions);
+      if (conflict) {
+        return {
+          content: [{ type: "text", text: conflict }],
+          details: { ok: false, conflict: true } as Record<string, unknown>,
+        };
       }
       try {
         const changed = translate(asSceneMap(client), params.ids, params.dx, params.dy);
@@ -344,6 +387,7 @@ export function registerSceneTools(pi: ExtensionAPI, client: RoomClient): void {
     parameters: Type.Object({
       from: Type.String({ description: "Element id the arrow starts at" }),
       to: Type.String({ description: "Element id the arrow points at" }),
+      label: Type.Optional(Type.String({ description: "Text drawn on the arrow" })),
     }),
     async execute(_toolCallId, params) {
       const blocked = requireRoom(client);
@@ -360,7 +404,7 @@ export function registerSceneTools(pi: ExtensionAPI, client: RoomClient): void {
       }
       try {
         const { elements, touched } = buildElements(
-          [{ type: "arrow", from: params.from, to: params.to }],
+          [{ type: "arrow", from: params.from, to: params.to, text: params.label }],
           { lastIndex: client.lastIndex(), existing: scene },
         );
         const changed = dedupe([...touched, ...elements]);

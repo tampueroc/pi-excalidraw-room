@@ -11,6 +11,7 @@ import { RoomClient } from "./client/room-client.ts";
 import { registerRoomTools } from "./tools/room.ts";
 import { registerSceneTools } from "./tools/scene.ts";
 import { registerFileTools } from "./tools/files.ts";
+import { registerGraphTools } from "./tools/graph.ts";
 import { registerExcalidrawCommand } from "./commands/excalidraw.ts";
 
 export default function (pi: ExtensionAPI): void {
@@ -20,6 +21,7 @@ export default function (pi: ExtensionAPI): void {
   registerRoomTools(pi, client, config);
   registerSceneTools(pi, client);
   registerFileTools(pi, client);
+  registerGraphTools(pi, client);
   registerExcalidrawCommand(pi, client, config);
 
   if (config.roomLink) {
